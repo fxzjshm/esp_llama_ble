@@ -24,15 +24,16 @@
 
 #define TASK_STACK 2048
 
-#define UART_PIN_TX 16
-#define UART_PIN_RX 17
-#define UART_RATE 1 * 1000 * 1000  // 115200
+#define UART_PRIMARY_PIN_TX 20
+#define UART_PRIMARY_PIN_RX 19
+#define UART_SECONDARY_PIN_TX 7
+#define UART_SECONDARY_PIN_RX 6
+#define UART_RATE 115200
 #define UART_BUFFER_SIZE 256
 #define UART_MSG_LEN 16
 #define UART_TIMEOUT 100  // ms
 
 #define SEND_RATE 4  // ms
-
 
 static uint8_t MAC_DONGLE[6];
 static uint8_t MAC_CONTROLLER[6];
@@ -41,12 +42,15 @@ static uint8_t MAC_C6_DEVBOARD_B[6] = {0xF0, 0xF5, 0xBD, 0x05, 0xCD, 0x2C};
 static uint8_t MAC_C2_DEVBOARD_A[6] = {0x08, 0x3a, 0x8d, 0x40, 0xd8, 0x00};
 static uint8_t MAC_C2_BREAKOUT_A[6] = {0x80, 0x64, 0x6f, 0x41, 0x02, 0x60};
 
-static int64_t uint8_to_int64(uint8_t *array) {
-    int64_t value = 0;
-    for (uint8_t i=0; i<8; i++) {
-        value |= ((int64_t)array[i]) << (i * 8);
+
+void print_array(uint8_t *array, uint8_t len, bool hex, bool newline) {
+    printf("[");
+    for(uint8_t i=0; i<len; i++) {
+        if (hex) printf("0x%02x ", array[i]);
+        else printf("%i ", array[i]);
     }
-    return value;
+    printf("]");
+    if (newline) printf("\n");
 }
 
 static void wifi_init(void) {
@@ -69,13 +73,24 @@ static void uart_init() {
         .flow_ctrl  = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_DEFAULT,
     };
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, 6, 7, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-
+    // Move uart0 (stdio) to secondary pins.
+    ESP_ERROR_CHECK(uart_set_pin(
+        UART_NUM_0,
+        UART_SECONDARY_PIN_TX,
+        UART_SECONDARY_PIN_RX,
+        UART_PIN_NO_CHANGE,
+        UART_PIN_NO_CHANGE
+    ));
+    // Config uart1 (data) to primary pins.
     ESP_ERROR_CHECK(uart_driver_install(UART_NUM_1, UART_BUFFER_SIZE, UART_BUFFER_SIZE, 0, NULL, 0));
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_1, &uart_config));
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_1, UART_PIN_TX, UART_PIN_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, 4, 5, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_set_pin(
+        UART_NUM_1,
+        UART_PRIMARY_PIN_TX,
+        UART_PRIMARY_PIN_RX,
+        UART_PIN_NO_CHANGE,
+        UART_PIN_NO_CHANGE
+    ));
 }
 
 static void dongle_task() {
@@ -110,9 +125,11 @@ static void controller_task() {
         int64_t now = esp_timer_get_time();
         memcpy(data, (uint8_t*)&now, 8);
 
-        uint8_t code = esp_now_send(MAC_DONGLE, data, 16);
-        // ESP_LOGI("CONTROLLER_TASK", "esp_now_send() code=%i", code);
-        vTaskDelay(4);
+        uint8_t err = esp_now_send(MAC_DONGLE, data, 16);
+        if (err) printf("send error=%i\n", err);
+        printf("send ");
+        print_array(data, 8, false, true);
+        vTaskDelay(1000);
 
         // size_t pending = 0;
         // uart_get_buffered_data_len(UART_NUM_1, &pending);
@@ -140,7 +157,6 @@ static void controller_task() {
         //     ESP_LOGE("CONTROLLER", "UART error %i", len);
         // }
     }
-    // free(data);
 }
 
 static void espnow_dongle_callback(
@@ -148,73 +164,36 @@ static void espnow_dongle_callback(
     const uint8_t *data,
     int len
 ) {
-    // ESP_LOGI("DONGLE_CB", "data %i %i %i %i ", data[0], data[1], data[2], data[3]);
-    esp_now_send(MAC_CONTROLLER, data, len);
+    char message[32] = "HID:";
+    memcpy(&message[4], data, 8);
+    uint8_t sent_len = uart_write_bytes(UART_NUM_1, message, 32);
+    if (sent_len != 32) printf("UART write error\n");
+    // printf("recv ");
+    // print_array(data, 8, false, true);
+    // esp_now_send(MAC_CONTROLLER, data, len);
 }
 
-static void espnow_controller_callback(
-    const esp_now_recv_info_t *recv_info,
-    const uint8_t *data,
-    int len
-) {
-    static uint16_t iter = 0;
-    static float sum = 0;
-    static int64_t last_print = 0;
-    int64_t ts;
-    memcpy(&ts, data, 8);
-    int64_t now = esp_timer_get_time();
-    int64_t roundtrip = (now - ts);
-    sum += roundtrip;
-    iter++;
-    if (now - last_print > 250*1000) {
-        ESP_LOGI("CONTROLLER_CB", "roundtrip_avg=%.0f packets=%i", sum/iter, iter);
-        last_print = now;
-        iter = 0;
-        sum = 0;
-    }
-}
-
-// static void espnow_callback_1(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len) {
-//     uint8_t err = esp_now_send(MAC_DONGLE, data, 8);
-// }
-
-// static void espnow_callback_2(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len) {
-//     static int64_t last = 0;
-
-//     int64_t now = esp_timer_get_time();
-//     int64_t elapsed = now - last;
-//     last = now;
-
-//     int64_t ts = uint8_to_int64((uint8_t *)data);
-//     int64_t latency = now - ts;
-
-//     static float elapsed_sum = 0;
-//     static float latency_sum = 0;
-//     static float elapsed_max = 0;
-//     static float latency_max = 0;
-//     elapsed_sum += elapsed;
-//     latency_sum += latency;
-//     if (elapsed > elapsed_max) elapsed_max = elapsed;
-//     if (latency > latency_max) latency_max = latency;
+// static void espnow_controller_callback(
+//     const esp_now_recv_info_t *recv_info,
+//     const uint8_t *data,
+//     int len
+// ) {
 //     static uint16_t iter = 0;
+//     static float sum = 0;
+//     static int64_t last_print = 0;
+//     int64_t ts;
+//     memcpy(&ts, data, 8);
+//     int64_t now = esp_timer_get_time();
+//     int64_t roundtrip = (now - ts);
+//     sum += roundtrip;
 //     iter++;
-//     float samples = 1000 / SEND_RATE;
-//     if (iter == samples) {
-//         float elapsed_avg = (elapsed_sum / samples) / 1000;
-//         float latency_avg = (latency_sum / samples) / 1000;
-//         ESP_LOGI(
-//             "",
-//             "ELAPSED avg=%0.1f max=%0.1f | LATENCY avg=%0.1f max=%0.1f",
-//             elapsed_avg, elapsed_max/1000, latency_avg, latency_max/1000
-//         );
-//         elapsed_sum = 0;
-//         latency_sum = 0;
-//         elapsed_max = 0;
-//         latency_max = 0;
+//     if (now - last_print > 250*1000) {
+//         printf("roundtrip_avg=%.0f packets=%i\n", sum/iter, iter);
+//         last_print = now;
 //         iter = 0;
+//         sum = 0;
 //     }
 // }
-
 
 void get_mac(uint8_t* mac) {
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
@@ -228,7 +207,8 @@ bool compare_mac(uint8_t* mac1, uint8_t* mac2) {
 }
 
 void add_peer(uint8_t* mac) {
-    ESP_LOGI("ADD_PEER", "MAC %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    printf("add_peer ");
+    print_array(mac, 6, true, true);
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, mac, 6);
     peer.channel = ESPNOW_CHANNEL;
@@ -238,8 +218,8 @@ void add_peer(uint8_t* mac) {
 }
 
 void app_main(void) {
-    memcpy(MAC_DONGLE, MAC_C2_DEVBOARD_A, 6);
-    memcpy(MAC_CONTROLLER, MAC_C2_BREAKOUT_A, 6);
+    memcpy(MAC_CONTROLLER, MAC_C2_DEVBOARD_A, 6);
+    memcpy(MAC_DONGLE, MAC_C2_BREAKOUT_A, 6);
 
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
@@ -255,11 +235,10 @@ void app_main(void) {
 
     uint8_t mac[6];
     get_mac(mac);
-    ESP_LOGI("MAIN", "MAC %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
     // Dongle.
     if (compare_mac(mac, MAC_DONGLE)) {
-        ESP_LOGI("MAIN", "INIT dongle");
+        printf("INIT dongle\n");
         add_peer(MAC_CONTROLLER);
         esp_now_register_recv_cb(espnow_dongle_callback);
         xTaskCreate(dongle_task, "dongle", TASK_STACK, NULL, 10, NULL);
@@ -267,9 +246,9 @@ void app_main(void) {
 
     // Controller.
     if (compare_mac(mac, MAC_CONTROLLER)) {
-        ESP_LOGI("MAIN", "INIT controller");
+        printf("INIT controller\n");
         add_peer(MAC_DONGLE);
-        esp_now_register_recv_cb(espnow_controller_callback);
+        // esp_now_register_recv_cb(espnow_controller_callback);
         xTaskCreate(controller_task, "controller", TASK_STACK, NULL, 10, NULL);
     }
 }
