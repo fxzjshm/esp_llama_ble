@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2024, Input Labs Oy.
+
 def bin2string(path):
     print(f'Converting {path}')
     array = open(path, 'rb').read()
@@ -14,13 +17,13 @@ def bin2string(path):
 template = open('bin2array/template.c', 'r', encoding='utf8').read()
 
 firmware = bin2string('build/llama.bin')
-# bootloader = bin2string('../build/bootloader/bootloader.bin')
-# partition = bin2string('../build/partition_table/partition-table.bin')
+bootloader = bin2string('build/bootloader/bootloader.bin')
+partition = bin2string('build/partition_table/partition-table.bin')
 
 bin_file = template[:]
 bin_file = bin_file.replace('//firmware', firmware)
-bin_file = bin_file.replace('//bootloader', '0x00')
-bin_file = bin_file.replace('//partition', '0x00')
+bin_file = bin_file.replace('//bootloader', bootloader)
+bin_file = bin_file.replace('//partition', partition)
 
 empty_file = template[:]
 empty_file = empty_file.replace('//firmware', '0x00')

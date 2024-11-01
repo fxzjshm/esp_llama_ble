@@ -18,3 +18,8 @@ idf.py build
 idf.py flash
 idf.py monitor
 ```
+
+## Pack binaries into C source arrays.
+```
+make binpack
+```
