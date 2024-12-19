@@ -12,6 +12,7 @@
 #include <freertos/timers.h>
 #include <driver/uart.h>
 #include <driver/gpio.h>
+#include <esp_adc/adc_oneshot.h>
 #include <nvs_flash.h>
 #include <esp_random.h>
 #include <esp_netif.h>
@@ -173,6 +174,36 @@ static void unified_callback(
 //     if (sent != len) printf("UART write error\n");
 // }
 
+void battery_level_task() {
+    // Init ADC.
+    adc_oneshot_unit_init_cfg_t unit_config = {
+        .unit_id = ADC_UNIT_1,
+    };
+    adc_oneshot_chan_cfg_t channel_config = {
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+        .atten = ADC_ATTEN_DB_12,
+    };
+    adc_oneshot_unit_handle_t adc_unit;
+    adc_oneshot_new_unit(&unit_config, &adc_unit);
+    adc_oneshot_config_channel(adc_unit, ADC_CHANNEL_0, &channel_config);
+    // Init switchable ground reference GPIO.
+    gpio_set_direction(GPIO_NUM_18, GPIO_MODE_INPUT);
+    // Start task.
+    while(true) {
+        // Pull down GPIO 18.
+        gpio_pulldown_en(GPIO_NUM_18);
+        vTaskDelay(1);  // Give time to settle.
+        // Measure in GPIO 0.
+        uint32_t value;
+        adc_oneshot_read(adc_unit, ADC_CHANNEL_0, (int*)&value);
+        printf("Battery level: %lu\n", value);
+        // Float GPIO 18.
+        gpio_pulldown_dis(GPIO_NUM_18);
+        // Delay.
+        vTaskDelay(2000);
+    }
+}
+
 void get_mac(uint8_t* mac) {
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
 }
@@ -216,6 +247,7 @@ void app_main(void) {
     printf("INIT: tasks and callbacks\n");
     esp_now_register_recv_cb(unified_callback);
     xTaskCreate(unified_task, "task", TASK_STACK, NULL, 10, NULL);
+    // xTaskCreate(battery_level_task, "battery", TASK_STACK, NULL, 10, NULL);
 
     // xTaskCreate(mock_task_1, "task", TASK_STACK, NULL, 10, NULL);
     // esp_now_register_recv_cb(mock_callback_1);
