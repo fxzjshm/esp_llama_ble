@@ -54,13 +54,6 @@ typedef enum _UART_AT {
 } UART_AT;
 
 static uint8_t MAC_BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-// static uint8_t MAC_C6_DEVBOARD_A[6] = {0xF0, 0xF5, 0xBD, 0x05, 0xDB, 0xA8};
-// static uint8_t MAC_C6_DEVBOARD_B[6] = {0xF0, 0xF5, 0xBD, 0x05, 0xCD, 0x2C};
-// static uint8_t MAC_C2_DEVBOARD_A[6] = {0x08, 0x3a, 0x8d, 0x40, 0xd8, 0x00};
-// static uint8_t MAC_C2_BREAKOUT_A[6] = {0x80, 0x64, 0x6f, 0x41, 0x02, 0x60};
-// static uint8_t MAC_DONGLE[6];
-// static uint8_t MAC_CONTROLLER[6];
-
 
 void print_array(uint8_t *array, uint8_t len, bool hex, bool newline) {
     printf("[");
@@ -172,44 +165,6 @@ static void espnow_callback(
     if (sent != message_len) printf("ESP: uart_write_bytes error\n");
 }
 
-// static void mock_task_1() {
-//     while(true) {
-//         char control[4] = {16, 32, 64, 128,};
-//         char payload[32] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
-//         uint8_t sent = 0;
-//         sent = uart_write_bytes(UART_NUM_0, control, 4);
-//         if (sent != 4) printf("UART write error\n");
-//         sent = uart_write_bytes(UART_NUM_0, payload, 32);
-//         if (sent != 32) printf("UART write error\n");
-//         vTaskDelay(2000);
-//     }
-// }
-
-// static void mock_task_2() {
-//     while(true) {
-//         uint8_t payload[32] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
-//         uint8_t err = esp_now_send(MAC_BROADCAST, payload, 32);
-//         printf("send error=%i\n", err);
-//         vTaskDelay(2000);
-//     }
-// }
-
-// static void mock_callback_1(
-//     const esp_now_recv_info_t *recv_info,
-//     const uint8_t *data,
-//     int len
-// ) {
-//     char control[4] = {16, 32, 64, 128};
-//     // char message[32] = {0,};
-//     // memcpy(message, payload, 32);
-//     // memcpy(message, payload, 32);
-//     uint8_t sent;
-//     sent = uart_write_bytes(UART_NUM_0, control, 4);
-//     if (sent != 4) printf("UART write error\n");
-//     sent = uart_write_bytes(UART_NUM_0, data, len);
-//     if (sent != len) printf("UART write error\n");
-// }
-
 void battery_level_task() {
     // Init ADC.
     adc_oneshot_unit_init_cfg_t unit_config = {
@@ -240,12 +195,12 @@ void battery_level_task() {
         }
         // Float GPIO 18.
         gpio_pulldown_dis(GPIO_NUM_18);
-        // Delay.
-        // printf("Battery level: %lu\n", battery_level);
+        // Send though UART.
         uint8_t message[8] = {30, 29, 28, AT_BATTERY, 0, 0, 0, 0};
         memcpy(&message[4], &battery_level, 4);
         uint8_t sent = uart_write_bytes(UART_NUM_0, message, 8);
         if (sent != 8) printf("ESP: uart_write_bytes error\n");
+        // Delay.
         vTaskDelay(10000);
     }
 }
@@ -274,9 +229,6 @@ void add_peer(uint8_t* mac) {
 }
 
 void app_main(void) {
-    // memcpy(MAC_CONTROLLER, MAC_C2_DEVBOARD_A, 6);
-    // memcpy(MAC_DONGLE, MAC_C2_BREAKOUT_A, 6);
-
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -284,17 +236,14 @@ void app_main(void) {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-
+    // Init comms.
     uart_init();
     wlan_init();
     esp_now_init();
     add_peer(MAC_BROADCAST);
-
+    // Init tasks.
     printf("ESP: Init RTOS tasks\n");
     esp_now_register_recv_cb(espnow_callback);
     xTaskCreate(uart_read_task, "uart_read", TASK_STACK, NULL, 10, NULL);
     xTaskCreate(battery_level_task, "battery_level", TASK_STACK, NULL, 11, NULL);
-
-    // xTaskCreate(mock_task_1, "task", TASK_STACK, NULL, 10, NULL);
-    // esp_now_register_recv_cb(mock_callback_1);
 }
