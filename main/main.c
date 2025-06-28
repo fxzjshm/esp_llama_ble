@@ -69,6 +69,7 @@ typedef enum _UART_AT {
 } UART_AT;
 
 // Static.
+static bool debug = false;
 static uint8_t MAC_BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static adc_oneshot_unit_handle_t adc_unit;
 static float battery_level = 0;
@@ -100,14 +101,14 @@ static void espnow_send_hid(uint8_t *payload) {
     uint8_t message[1+AT_HID_LEN] = {AT_HID, 0,};
     memcpy(&message[1], payload, AT_HID_LEN);
     uint8_t err_send = esp_now_send(MAC_BROADCAST, message, 1+AT_HID_LEN);
-    if (err_send) printf("ESP: espnow_send_hid error=%i\n", err_send);
+    if (err_send && debug) printf("ESP: espnow_send_hid error=%i\n", err_send);
 }
 
 static void espnow_send_webusb(uint8_t *payload) {
     uint8_t message[1+AT_WEBUSB_LEN] = {AT_WEBUSB, 0,};
     memcpy(&message[1], payload, AT_WEBUSB_LEN);
     uint8_t err_send = esp_now_send(MAC_BROADCAST, message, 1+AT_WEBUSB_LEN);
-    if (err_send) printf("ESP: espnow_send_webusb error=%i\n", err_send);
+    if (err_send && debug) printf("ESP: espnow_send_webusb error=%i\n", err_send);
 }
 
 static void espnow_send_usb_protocol(uint8_t *payload) {
@@ -245,6 +246,7 @@ void battery_level_send_uart() {
 }
 
 void battery_adc_init() {
+    printf("ESP: battery_adc_init\n");
     adc_oneshot_unit_init_cfg_t unit_config = {
         .unit_id = ADC_UNIT_1,
     };
