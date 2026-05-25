@@ -147,7 +147,7 @@ static void uart_init() {
 }
 
 // Redirect incomming UART messages to ESPNOW.
-static void uart_read_task() {
+static void uart_read_task(void *pvParameters) {
     static uint8_t i = 0;
     static uint8_t command = 0;
     static uint8_t payload[UART_PAYLOAD_MAX_LEN] = {0,};
@@ -264,7 +264,7 @@ void battery_adc_init() {
     }
 }
 
-void battery_level_task() {
+void battery_level_task(void *pvParameters) {
     while(true) {
         battery_level_update();
         battery_level_send_uart();
