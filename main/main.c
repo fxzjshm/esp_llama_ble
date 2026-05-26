@@ -46,17 +46,17 @@
 #define AT_BATTERY_LEN 4
 #define AT_USB_PROTOCOL_LEN 1
 
-#define TX_20_DB 80
-#define TX_18_DB 72
-#define TX_16_DB 66
-#define TX_15_DB 60
-#define TX_14_DB 56
-#define TX_13_DB 52
-#define TX_11_DB 44
-#define TX_8_DB 34
-#define TX_7_DB 28
-#define TX_5_DB 20
-#define TX_2_DB 8
+// #define TX_20_DB 80
+// #define TX_18_DB 72
+// #define TX_16_DB 66
+// #define TX_15_DB 60
+// #define TX_14_DB 56
+// #define TX_13_DB 52
+// #define TX_11_DB 44
+// #define TX_8_DB 34
+// #define TX_7_DB 28
+// #define TX_5_DB 20
+// #define TX_2_DB 8
 
 #define BATTERY_INIT_SAMPLES 10
 #define BATTERY_AVERAGE_SAMPLES 10
@@ -94,7 +94,7 @@ static void wlan_init(void) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_ERROR_CHECK(esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE));
-    ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(TX_11_DB));
+    // ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(TX_11_DB));  // This does not seem to work, using SDK config instead.
 }
 
 static void espnow_send_hid(uint8_t *payload) {
@@ -147,7 +147,7 @@ static void uart_init() {
 }
 
 // Redirect incomming UART messages to ESPNOW.
-static void uart_read_task() {
+static void uart_read_task(void *pvParameters) {
     static uint8_t i = 0;
     static uint8_t command = 0;
     static uint8_t payload[UART_PAYLOAD_MAX_LEN] = {0,};
@@ -264,7 +264,7 @@ void battery_adc_init() {
     }
 }
 
-void battery_level_task() {
+void battery_level_task(void *pvParameters) {
     while(true) {
         battery_level_update();
         battery_level_send_uart();
