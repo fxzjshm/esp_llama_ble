@@ -6,8 +6,11 @@
 #
 # Usage: idf.py reconfigure && idf.py build
 
-# Enable Bluetooth with NimBLE host stack (native for ESP32-C2)
+# Enable Bluetooth
 CONFIG_BT_ENABLED=y
+
+# Select NimBLE as the BLE host stack (native for ESP32-C2)
+CONFIG_BT_NIMBLE_ENABLED=y
 
 # Disable WiFi / ESPNOW (no longer needed)
 CONFIG_ESP_WIFI_ENABLED=n
