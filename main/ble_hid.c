@@ -1,0 +1,182 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Copyright (C) 2025, Input Labs Oy.
+
+#include <stdio.h>
+#include <string.h>
+#include "esp_err.h"
+#include "esp_event.h"
+#include "esp_hidd.h"
+#include "ble_hid.h"
+
+static esp_hidd_dev_t *hid_dev = NULL;
+static bool connected = false;
+
+// HID Report Map — composite device with keyboard, mouse, and gamepad.
+// Report ID 1: Keyboard (8 bytes: modifier, reserved, keycode[6])
+// Report ID 2: Mouse (7 bytes: buttons, x[2], y[2], scroll, pan)
+// Report ID 3: Gamepad (16 bytes: lx[2], ly[2], rx[2], ry[2], lz[2], rz[2], buttons[4])
+static const uint8_t hid_report_map[] = {
+    0x05, 0x01,       // Usage Page (Generic Desktop)
+    0x09, 0x06,       // Usage (Keyboard)
+    0xA1, 0x01,       // Collection (Application)
+    0x85, 0x01,       //   Report ID (1)
+    0x05, 0x07,       //   Usage Page (Key Codes)
+    0x19, 0xE0,       //   Usage Minimum (224)
+    0x29, 0xE7,       //   Usage Maximum (231)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x01,       //   Logical Maximum (1)
+    0x75, 0x01,       //   Report Size (1)
+    0x95, 0x08,       //   Report Count (8)
+    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0x95, 0x01,       //   Report Count (1)
+    0x75, 0x08,       //   Report Size (8)
+    0x81, 0x01,       //   Input (Const)
+    0x95, 0x05,       //   Report Count (5)
+    0x75, 0x01,       //   Report Size (1)
+    0x05, 0x08,       //   Usage Page (LEDs)
+    0x19, 0x01,       //   Usage Minimum (1)
+    0x29, 0x05,       //   Usage Maximum (5)
+    0x91, 0x02,       //   Output (Data,Var,Abs)
+    0x95, 0x01,       //   Report Count (1)
+    0x75, 0x03,       //   Report Size (3)
+    0x91, 0x01,       //   Output (Const)
+    0x95, 0x06,       //   Report Count (6)
+    0x75, 0x08,       //   Report Size (8)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x65,       //   Logical Maximum (101)
+    0x05, 0x07,       //   Usage Page (Key Codes)
+    0x19, 0x00,       //   Usage Minimum (0)
+    0x29, 0x65,       //   Usage Maximum (101)
+    0x81, 0x00,       //   Input (Data,Array)
+    0xC0,             // End Collection
+
+    0x05, 0x01,       // Usage Page (Generic Desktop)
+    0x09, 0x02,       // Usage (Mouse)
+    0xA1, 0x01,       // Collection (Application)
+    0x85, 0x02,       //   Report ID (2)
+    0x09, 0x01,       //   Usage (Pointer)
+    0xA1, 0x00,       //   Collection (Physical)
+    0x05, 0x09,       //     Usage Page (Button)
+    0x19, 0x01,       //     Usage Minimum (1)
+    0x29, 0x05,       //     Usage Maximum (5)
+    0x15, 0x00,       //     Logical Minimum (0)
+    0x25, 0x01,       //     Logical Maximum (1)
+    0x95, 0x05,       //     Report Count (5)
+    0x75, 0x01,       //     Report Size (1)
+    0x81, 0x02,       //     Input (Data,Var,Abs)
+    0x95, 0x01,       //     Report Count (1)
+    0x75, 0x03,       //     Report Size (3)
+    0x81, 0x01,       //     Input (Const)
+    0x05, 0x01,       //     Usage Page (Generic Desktop)
+    0x09, 0x30,       //     Usage (X)
+    0x09, 0x31,       //     Usage (Y)
+    0x16, 0x00, 0x80, //     Logical Minimum (-32767)
+    0x26, 0xFF, 0x7F, //     Logical Maximum (32767)
+    0x75, 0x10,       //     Report Size (16)
+    0x95, 0x02,       //     Report Count (2)
+    0x81, 0x06,       //     Input (Data,Var,Rel)
+    0x09, 0x38,       //     Usage (Wheel)
+    0x15, 0x81,       //     Logical Minimum (-127)
+    0x25, 0x7F,       //     Logical Maximum (127)
+    0x75, 0x08,       //     Report Size (8)
+    0x95, 0x01,       //     Report Count (1)
+    0x81, 0x06,       //     Input (Data,Var,Rel)
+    0x09, 0x38,       //     Usage (Wheel) — pan
+    0x15, 0x81,       //     Logical Minimum (-127)
+    0x25, 0x7F,       //     Logical Maximum (127)
+    0x75, 0x08,       //     Report Size (8)
+    0x95, 0x01,       //     Report Count (1)
+    0x81, 0x06,       //     Input (Data,Var,Rel)
+    0xC0,             //   End Collection
+    0xC0,             // End Collection
+
+    0x05, 0x01,       // Usage Page (Generic Desktop)
+    0x09, 0x05,       // Usage (Game Pad)
+    0xA1, 0x01,       // Collection (Application)
+    0x85, 0x03,       //   Report ID (3)
+    0x05, 0x09,       //   Usage Page (Button)
+    0x19, 0x01,       //   Usage Minimum (1)
+    0x29, 0x10,       //   Usage Maximum (16)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x01,       //   Logical Maximum (1)
+    0x75, 0x01,       //   Report Size (1)
+    0x95, 0x10,       //   Report Count (16)
+    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0x05, 0x01,       //   Usage Page (Generic Desktop)
+    0x09, 0x30,       //   Usage (X)
+    0x09, 0x31,       //   Usage (Y)
+    0x09, 0x32,       //   Usage (Z)
+    0x09, 0x35,       //   Usage (Rz)
+    0x16, 0x00, 0x80, //   Logical Minimum (-32767)
+    0x26, 0xFF, 0x7F, //   Logical Maximum (32767)
+    0x75, 0x10,       //   Report Size (16)
+    0x95, 0x04,       //   Report Count (4)
+    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0x09, 0x33,       //   Usage (Rx)
+    0x09, 0x34,       //   Usage (Ry)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x26, 0xFF, 0x00, //   Logical Maximum (255)
+    0x75, 0x08,       //   Report Size (8)
+    0x95, 0x02,       //   Report Count (2)
+    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0xC0              // End Collection
+};
+
+static esp_hid_raw_report_map_t maps[] = {{
+    .data = hid_report_map,
+    .len = sizeof(hid_report_map),
+}};
+
+static void hid_event_handler(void *event_handler_arg, esp_event_base_t event_base,
+                              int32_t event_id, void *event_data) {
+    esp_hidd_event_data_t *evt = (esp_hidd_event_data_t *)event_data;
+    switch (event_id) {
+        case ESP_HIDD_CONNECT_EVENT:
+            connected = true;
+            printf("BLE: connected (status=%d)\n", evt->connect.status);
+            break;
+        case ESP_HIDD_DISCONNECT_EVENT:
+            connected = false;
+            printf("BLE: disconnected (reason=%d)\n", evt->disconnect.reason);
+            break;
+        case ESP_HIDD_OUTPUT_EVENT:
+            // Host sent output report (e.g., keyboard LEDs). Not used by Alpakka.
+            break;
+        case ESP_HIDD_FEATURE_EVENT:
+            break;
+        default:
+            break;
+    }
+}
+
+void ble_hid_init(void) {
+    printf("BLE: esp_hidd init\n");
+    const esp_hid_device_config_t config = {
+        .vendor_id = 0x1234,
+        .product_id = 0x0001,
+        .version = 0x0100,
+        .device_name = "Alpakka",
+        .manufacturer_name = "Input Labs",
+        .serial_number = "000001",
+        .report_maps = maps,
+        .report_maps_len = 1,
+    };
+    esp_err_t ret = esp_hidd_dev_init(
+        &config, ESP_HID_TRANSPORT_BLE, hid_event_handler, &hid_dev);
+    if (ret != ESP_OK) {
+        printf("BLE: esp_hidd_dev_init error=%d\n", ret);
+    }
+}
+
+void ble_hid_send_hid(uint8_t report_id, uint8_t *data, uint8_t len) {
+    if (!connected || !hid_dev) return;
+    esp_err_t ret = esp_hidd_dev_input_set(hid_dev, 0, report_id, data, len);
+    if (ret != ESP_OK) {
+        printf("BLE: input_set error=%d\n", ret);
+    }
+}
+
+void ble_hid_battery_set(uint8_t level) {
+    if (!hid_dev) return;
+    esp_hidd_dev_battery_set(hid_dev, level);
+}
