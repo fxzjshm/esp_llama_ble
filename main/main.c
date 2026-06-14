@@ -14,17 +14,10 @@
 #include <driver/gpio.h>
 #include <esp_adc/adc_oneshot.h>
 #include <nvs_flash.h>
-#include <esp_random.h>
-#include <esp_netif.h>
-#include <esp_wifi.h>
 #include <esp_log.h>
-#include <esp_mac.h>
-#include <esp_now.h>
 #include <esp_timer.h>
 
-#define ESPNOW_CHANNEL 9
-#define ESPNOW_PMK "pmk1234567890123"
-#define ESPNOW_LMK "lmk1234567890123"
+#include "ble_hid.h"
 
 #define TASK_STACK 2048
 
@@ -60,6 +53,8 @@
 
 #define BATTERY_INIT_SAMPLES 10
 #define BATTERY_AVERAGE_SAMPLES 10
+#define BATTERY_RAW_MIN 2000
+#define BATTERY_RAW_MAX 3100
 
 typedef enum _UART_AT {
     AT_HID = 1,
@@ -69,67 +64,8 @@ typedef enum _UART_AT {
 } UART_AT;
 
 // Static.
-static bool debug = false;
-static uint8_t MAC_BROADCAST[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static adc_oneshot_unit_handle_t adc_unit;
 static float battery_level = 0;
-
-void print_array(uint8_t *array, uint8_t len, bool hex, bool newline) {
-    printf("[");
-    for(uint8_t i=0; i<len; i++) {
-        if (hex) printf("0x%02x ", array[i]);
-        else printf("%i ", array[i]);
-    }
-    printf("]");
-    if (newline) printf("\n");
-}
-
-static void wlan_init(void) {
-    printf("ESP: wlan_init\n");
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_ERROR_CHECK(esp_wifi_set_channel(ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE));
-    // ESP_ERROR_CHECK(esp_wifi_set_max_tx_power(TX_11_DB));  // This does not seem to work, using SDK config instead.
-}
-
-static void espnow_send_hid(uint8_t *payload) {
-    uint8_t message[1+AT_HID_LEN] = {AT_HID, 0,};
-    memcpy(&message[1], payload, AT_HID_LEN);
-    uint8_t err_send = esp_now_send(MAC_BROADCAST, message, 1+AT_HID_LEN);
-    if (err_send && debug) printf("ESP: espnow_send_hid error=%i\n", err_send);
-}
-
-static void espnow_send_webusb(uint8_t *payload) {
-    uint8_t message[1+AT_WEBUSB_LEN] = {AT_WEBUSB, 0,};
-    memcpy(&message[1], payload, AT_WEBUSB_LEN);
-    uint8_t err_send = esp_now_send(MAC_BROADCAST, message, 1+AT_WEBUSB_LEN);
-    if (err_send && debug) printf("ESP: espnow_send_webusb error=%i\n", err_send);
-}
-
-static void espnow_send_usb_protocol(uint8_t *payload) {
-    uint8_t message[1+AT_USB_PROTOCOL_LEN] = {AT_USB_PROTOCOL, 0,};
-    memcpy(&message[1], payload, AT_USB_PROTOCOL_LEN);
-    uint8_t err_send = esp_now_send(MAC_BROADCAST, message, 1+AT_USB_PROTOCOL_LEN);
-    if (err_send) printf("ESP: espnow_send_usb_protocol error=%i\n", err_send);
-}
-
-// Redirect incomming ESPNOW messages to UART.
-static void espnow_callback(
-    const esp_now_recv_info_t *recv_info,
-    const uint8_t *data,
-    int len
-) {
-    char message[UART_PAYLOAD_MAX_LEN] = {UART_CONTROL_0, UART_CONTROL_1, UART_CONTROL_2, 0,};
-    memcpy(&message[3], data, len);
-    uint8_t message_len = 3 + len;
-    uint8_t sent = uart_write_bytes(UART_NUM_0, message, message_len);
-    if (sent != message_len) printf("ESP: uart_write_bytes error\n");
-}
 
 static void uart_init() {
     printf("ESP: uart_init\n");
@@ -146,7 +82,7 @@ static void uart_init() {
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &uart_config));
 }
 
-// Redirect incomming UART messages to ESPNOW.
+// Redirect incomming UART messages to BLE HID.
 static void uart_read_task(void *pvParameters) {
     static uint8_t i = 0;
     static uint8_t command = 0;
@@ -190,17 +126,19 @@ static void uart_read_task(void *pvParameters) {
             i += 1;
             // Payload complete.
             if (command==AT_HID && i==UART_HEADER_LEN+AT_HID_LEN) {
-                espnow_send_hid(payload);
+                // payload[0] = report_id, payload[1..] = HID report data.
+                ble_hid_send_hid(payload[0], &payload[1], AT_HID_LEN-1);
                 i = 0;
                 continue;
             }
             if (command==AT_WEBUSB && i==UART_HEADER_LEN+AT_WEBUSB_LEN) {
-                espnow_send_webusb(payload);
+                // WebUSB / Ctrl protocol not supported over BLE.
+                // Use USB cable for configuration.
                 i = 0;
                 continue;
             }
             if (command==AT_USB_PROTOCOL && i==UART_HEADER_LEN+AT_USB_PROTOCOL_LEN) {
-                espnow_send_usb_protocol(payload);
+                // USB protocol sync not needed for BLE direct connection.
                 i = 0;
                 continue;
             }
@@ -220,6 +158,14 @@ float battery_level_read() {
     gpio_pulldown_dis(GPIO_NUM_18);
     // Return.
     return (float)value;
+}
+
+float battery_level_to_pct() {
+    // Convert raw ADC to percentage (relative to min/max range).
+    float pct = (battery_level - BATTERY_RAW_MIN) / (BATTERY_RAW_MAX - BATTERY_RAW_MIN);
+    if (pct < 0) pct = 0;
+    if (pct > 1) pct = 1;
+    return pct * 100;
 }
 
 void battery_level_update() {
@@ -268,31 +214,9 @@ void battery_level_task(void *pvParameters) {
     while(true) {
         battery_level_update();
         battery_level_send_uart();
+        ble_hid_battery_set((uint8_t)battery_level_to_pct());
         vTaskDelay(10000);
     }
-}
-
-void get_mac(uint8_t* mac) {
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-}
-
-bool compare_mac(uint8_t* mac1, uint8_t* mac2) {
-    for (uint8_t i=0; i<6; i++) {
-        if (mac1[i] != mac2[i]) return false;
-    }
-    return true;
-}
-
-void add_peer(uint8_t* mac) {
-    printf("add_peer ");
-    print_array(mac, 6, true, true);
-    esp_now_peer_info_t peer = {};
-    memcpy(peer.peer_addr, mac, 6);
-    peer.channel = ESPNOW_CHANNEL;
-    if (compare_mac(mac, MAC_BROADCAST)) peer.encrypt = false;
-    else peer.encrypt = true;
-    esp_err_t ret = esp_now_add_peer(&peer);
-    ESP_ERROR_CHECK(ret);
 }
 
 void app_main(void) {
@@ -305,14 +229,11 @@ void app_main(void) {
     ESP_ERROR_CHECK(ret);
     // Init comms.
     uart_init();
-    wlan_init();
-    esp_now_init();
-    add_peer(MAC_BROADCAST);
+    ble_hid_init();
     // Init ADC.
     battery_adc_init();
     // Init tasks.
     printf("ESP: Init RTOS tasks\n");
-    esp_now_register_recv_cb(espnow_callback);
     xTaskCreate(uart_read_task, "uart_read", TASK_STACK, NULL, 10, NULL);
     xTaskCreate(battery_level_task, "battery_level", TASK_STACK, NULL, 11, NULL);
 }
