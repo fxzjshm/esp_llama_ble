@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) 2025, Input Labs Oy.
+#
+# sdkconfig.defaults for esp_llama_ble
+# BLE HID device using NimBLE + esp_hidd
+#
+# Usage: idf.py reconfigure && idf.py build
+
+# Enable Bluetooth with NimBLE host stack (native for ESP32-C2)
+CONFIG_BT_ENABLED=y
+
+# Disable WiFi / ESPNOW (no longer needed)
+CONFIG_ESP_WIFI_ENABLED=n
+
+# Optimize NimBLE for single peripheral connection
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
