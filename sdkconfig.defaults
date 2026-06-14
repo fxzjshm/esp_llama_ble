@@ -12,5 +12,8 @@ CONFIG_BT_ENABLED=y
 # Disable WiFi / ESPNOW (no longer needed)
 CONFIG_ESP_WIFI_ENABLED=n
 
+# Enable NimBLE HID service (required by esp_hidd for HID Device support)
+CONFIG_BT_NIMBLE_HID_SERVICE=y
+
 # Optimize NimBLE for single peripheral connection
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
