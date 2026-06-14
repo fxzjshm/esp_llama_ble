@@ -6,6 +6,9 @@
 #include "esp_err.h"
 #include "esp_event.h"
 #include "esp_hidd.h"
+#include "nimble/nimble_port.h"
+#include "nimble/nimble_port_freertos.h"
+#include "host/ble_hs.h"
 #include "ble_hid.h"
 
 static esp_hidd_dev_t *hid_dev = NULL;
@@ -149,11 +152,21 @@ static void hid_event_handler(void *event_handler_arg, esp_event_base_t event_ba
     }
 }
 
+static void ble_host_task(void *param) {
+    nimble_port_run();
+    nimble_port_freertos_deinit();
+}
+
 void ble_hid_init(void) {
     printf("BLE: esp_hidd init\n");
     esp_err_t ret = esp_event_loop_create_default();
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         printf("BLE: event loop error=%d\n", ret);
+        return;
+    }
+    ret = nimble_port_init();
+    if (ret != ESP_OK) {
+        printf("BLE: nimble_port_init error=%d\n", ret);
         return;
     }
     const esp_hid_device_config_t config = {
@@ -170,7 +183,10 @@ void ble_hid_init(void) {
         &config, ESP_HID_TRANSPORT_BLE, hid_event_handler, &hid_dev);
     if (ret != ESP_OK) {
         printf("BLE: esp_hidd_dev_init error=%d\n", ret);
+        return;
     }
+    printf("BLE: esp_hidd_dev_init ok\n");
+    nimble_port_freertos_init(ble_host_task);
 }
 
 void ble_hid_send_hid(uint8_t report_id, uint8_t *data, uint8_t len) {
