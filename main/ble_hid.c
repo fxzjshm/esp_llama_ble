@@ -151,6 +151,11 @@ static void hid_event_handler(void *event_handler_arg, esp_event_base_t event_ba
 
 void ble_hid_init(void) {
     printf("BLE: esp_hidd init\n");
+    esp_err_t ret = esp_event_loop_create_default();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        printf("BLE: event loop error=%d\n", ret);
+        return;
+    }
     const esp_hid_device_config_t config = {
         .vendor_id = 0x1234,
         .product_id = 0x0001,
@@ -161,7 +166,7 @@ void ble_hid_init(void) {
         .report_maps = maps,
         .report_maps_len = 1,
     };
-    esp_err_t ret = esp_hidd_dev_init(
+    ret = esp_hidd_dev_init(
         &config, ESP_HID_TRANSPORT_BLE, hid_event_handler, &hid_dev);
     if (ret != ESP_OK) {
         printf("BLE: esp_hidd_dev_init error=%d\n", ret);
