@@ -162,9 +162,9 @@ static void ble_host_task(void *param) {
 
 void ble_hid_init(void) {
     printf("BLE: esp_hidd init\n");
-    esp_err_t ret = esp_hid_gap_init(HIDD_BLE_MODE);
+    esp_err_t ret = nimble_port_init();
     if (ret != ESP_OK) {
-        printf("BLE: esp_hid_gap_init error=%d\n", ret);
+        printf("BLE: nimble_port_init error=%d\n", ret);
         return;
     }
     ret = esp_hid_ble_gap_adv_init(ESP_HID_APPEARANCE_GENERIC, "Alpakka");
