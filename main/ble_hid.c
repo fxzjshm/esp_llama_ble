@@ -4,11 +4,10 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_err.h"
-#include "esp_event.h"
 #include "esp_hidd.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
-#include "host/ble_hs.h"
+#include "esp_hid_gap.h"
 #include "ble_hid.h"
 
 static esp_hidd_dev_t *hid_dev = NULL;
@@ -132,18 +131,22 @@ static esp_hid_raw_report_map_t maps[] = {{
 
 static void hid_event_handler(void *event_handler_arg, esp_event_base_t event_base,
                               int32_t event_id, void *event_data) {
-    esp_hidd_event_data_t *evt = (esp_hidd_event_data_t *)event_data;
+    (void)event_data;
     switch (event_id) {
+        case ESP_HIDD_START_EVENT:
+            printf("BLE: HID device started\n");
+            esp_hid_ble_gap_adv_start();
+            break;
         case ESP_HIDD_CONNECT_EVENT:
             connected = true;
-            printf("BLE: connected (status=%d)\n", evt->connect.status);
+            printf("BLE: connected\n");
             break;
         case ESP_HIDD_DISCONNECT_EVENT:
             connected = false;
-            printf("BLE: disconnected (reason=%d)\n", evt->disconnect.reason);
+            printf("BLE: disconnected\n");
+            esp_hid_ble_gap_adv_start();
             break;
         case ESP_HIDD_OUTPUT_EVENT:
-            // Host sent output report (e.g., keyboard LEDs). Not used by Alpakka.
             break;
         case ESP_HIDD_FEATURE_EVENT:
             break;
@@ -159,14 +162,14 @@ static void ble_host_task(void *param) {
 
 void ble_hid_init(void) {
     printf("BLE: esp_hidd init\n");
-    esp_err_t ret = esp_event_loop_create_default();
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        printf("BLE: event loop error=%d\n", ret);
+    esp_err_t ret = esp_hid_gap_init(HIDD_BLE_MODE);
+    if (ret != ESP_OK) {
+        printf("BLE: esp_hid_gap_init error=%d\n", ret);
         return;
     }
-    ret = nimble_port_init();
+    ret = esp_hid_ble_gap_adv_init(ESP_HID_APPEARANCE_GENERIC, "Alpakka");
     if (ret != ESP_OK) {
-        printf("BLE: nimble_port_init error=%d\n", ret);
+        printf("BLE: adv_init error=%d\n", ret);
         return;
     }
     const esp_hid_device_config_t config = {
@@ -188,6 +191,9 @@ void ble_hid_init(void) {
     printf("BLE: esp_hidd_dev_init ok\n");
     nimble_port_freertos_init(ble_host_task);
 }
+
+// Stub required by esp_hid_gap.c (example uses it to start a demo task).
+void ble_hid_task_start_up(void) {}
 
 void ble_hid_send_hid(uint8_t report_id, uint8_t *data, uint8_t len) {
     if (!connected || !hid_dev) return;
