@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include "esp_err.h"
 #include "esp_hidd.h"
@@ -24,7 +25,9 @@ static struct ble_gap_event_listener gap_listener;
 // HID Report Map — composite device with keyboard, mouse, and gamepad.
 // Report ID 1: Keyboard (8 bytes: modifier, reserved, keycode[6])
 // Report ID 2: Mouse (7 bytes: buttons, x[2], y[2], scroll, pan)
-// Report ID 3: Gamepad (12 bytes: buttons[2], lx[2], ly[2], rx[2], ry[2], lz[1], rz[1])
+// Report ID 3: Gamepad (15 bytes: buttons[2], hat[1], x[2], y[2], z[2], rx[2], ry[2], rz[2])
+// Standard Xbox/PS controller mapping on Linux:
+// X=leftX, Y=leftY, Z=leftTrigger, Rx=rightX, Ry=rightY, Rz=rightTrigger
 static const uint8_t hid_report_map[] = {
     0x05, 0x01,       // Usage Page (Generic Desktop)
     0x09, 0x06,       // Usage (Keyboard)
@@ -113,21 +116,26 @@ static const uint8_t hid_report_map[] = {
     0x95, 0x10,       //   Report Count (16)
     0x81, 0x02,       //   Input (Data,Var,Abs)
     0x05, 0x01,       //   Usage Page (Generic Desktop)
-    0x09, 0x30,       //   Usage (X)
-    0x09, 0x31,       //   Usage (Y)
-    0x09, 0x32,       //   Usage (Z)
-    0x09, 0x35,       //   Usage (Rz)
+    0x09, 0x39,       //   Usage (Hat Switch)
+    0x15, 0x01,       //   Logical Minimum (1)
+    0x25, 0x08,       //   Logical Maximum (8)
+    0x35, 0x00,       //   Physical Minimum (0)
+    0x46, 0x3B, 0x01, //   Physical Maximum (315)
+    0x65, 0x12,       //   Unit (SI Rot : Ang Pos)
+    0x75, 0x08,       //   Report Size (8)
+    0x95, 0x01,       //   Report Count (1)
+    0x81, 0x42,       //   Input (Data,Var,Abs,Null)
+    0x05, 0x01,       //   Usage Page (Generic Desktop)
+    0x09, 0x30,       //   Usage (X)       — left stick X
+    0x09, 0x31,       //   Usage (Y)       — left stick Y
+    0x09, 0x32,       //   Usage (Z)       — left trigger
+    0x09, 0x33,       //   Usage (Rx)      — right stick X
+    0x09, 0x34,       //   Usage (Ry)      — right stick Y
+    0x09, 0x35,       //   Usage (Rz)      — right trigger
     0x16, 0x00, 0x80, //   Logical Minimum (-32767)
     0x26, 0xFF, 0x7F, //   Logical Maximum (32767)
     0x75, 0x10,       //   Report Size (16)
-    0x95, 0x04,       //   Report Count (4)
-    0x81, 0x02,       //   Input (Data,Var,Abs)
-    0x09, 0x33,       //   Usage (Rx)
-    0x09, 0x34,       //   Usage (Ry)
-    0x15, 0x00,       //   Logical Minimum (0)
-    0x26, 0xFF, 0x00, //   Logical Maximum (255)
-    0x75, 0x08,       //   Report Size (8)
-    0x95, 0x02,       //   Report Count (2)
+    0x95, 0x06,       //   Report Count (6)
     0x81, 0x02,       //   Input (Data,Var,Abs)
     0xC0              // End Collection
 };
@@ -250,52 +258,98 @@ typedef struct __attribute__((packed)) {
 
 typedef struct __attribute__((packed)) {
     uint16_t buttons;
-    int16_t x;
-    int16_t y;
-    int16_t z;
-    int16_t rz;
-    uint8_t rx;
-    uint8_t ry;
+    uint8_t hat;   // Hat Switch (0=centered, 1-8=directions)
+    int16_t x;     // left stick X  (X usage)
+    int16_t y;     // left stick Y  (Y usage)
+    int16_t lz;    // left trigger  (Z usage)
+    int16_t rx;    // right stick X (Rx usage)
+    int16_t ry;    // right stick Y (Ry usage)
+    int16_t rz;    // right trigger (Rz usage)
 } ble_gamepad_t;
+
+static uint8_t hat_from_dpad(bool up, bool down, bool left, bool right) {
+    if      ( up && !down && !left && !right) return 1;
+    else if ( up && !down && !left &&  right) return 2;
+    else if (!up && !down && !left &&  right) return 3;
+    else if (!up &&  down && !left &&  right) return 4;
+    else if (!up &&  down && !left && !right) return 5;
+    else if (!up &&  down &&  left && !right) return 6;
+    else if (!up && !down &&  left && !right) return 7;
+    else if ( up && !down &&  left && !right) return 8;
+    return 0;
+}
 
 static void conv_gamepad(uint8_t *src, uint8_t *dst) {
     rp2040_gamepad_t *rp = (rp2040_gamepad_t *)src;
-    ble_gamepad_t *ble = (ble_gamepad_t *)dst;
-    ble->buttons = rp->buttons;
-    ble->x = rp->lx;
-    ble->y = rp->ly;
-    ble->z = rp->rx;
-    ble->rz = rp->ry;
-    ble->rx = (rp->lz + 32767) >> 8;
-    ble->ry = (rp->rz + 32767) >> 8;
+    ble_gamepad_t *b = (ble_gamepad_t *)dst;
+    // Buttons: remap to match Linux standard gamepad mapping
+    b->buttons =
+        ((rp->buttons >> 0) & 1) << 0  |   // A        → bit 0  (BTN_SOUTH)
+        ((rp->buttons >> 1) & 1) << 1  |   // B        → bit 1  (BTN_EAST)
+        0                                 |   //          bit 2  (BTN_C, unused)
+        ((rp->buttons >> 2) & 1) << 3  |   // X        → bit 3  (BTN_NORTH)
+        ((rp->buttons >> 3) & 1) << 4  |   // Y        → bit 4  (BTN_WEST)
+        0                                 |   //          bit 5  (BTN_Z, unused)
+        ((rp->buttons >> 4) & 1) << 6  |   // L1       → bit 6  (BTN_TL)
+        ((rp->buttons >> 5) & 1) << 7  |   // R1       → bit 7  (BTN_TR)
+        0                                 |   //          bit 8  (BTN_TL2, unused)
+        0                                 |   //          bit 9  (BTN_TR2, unused)
+        ((rp->buttons >> 12) & 1) << 10 |  // SELECT   → bit 10 (BTN_SELECT)
+        ((rp->buttons >> 13) & 1) << 11 |  // START    → bit 11 (BTN_START)
+        ((rp->buttons >> 14) & 1) << 12 |  // HOME     → bit 12 (BTN_MODE)
+        ((rp->buttons >> 6) & 1) << 13 |   // L3       → bit 13 (BTN_THUMBL)
+        ((rp->buttons >> 7) & 1) << 14 |   // R3       → bit 14 (BTN_THUMBR)
+        0;                                 //          bit 15 (unused)
+    // Hat Switch: convert D-pad buttons to hat value
+    b->hat = hat_from_dpad(
+        (rp->buttons >> 10) & 1,  // UP
+        (rp->buttons >> 11) & 1,  // DOWN
+        (rp->buttons >> 8) & 1,   // LEFT
+        (rp->buttons >> 9) & 1);  // RIGHT
+    // Axes
+    b->x  = rp->lx;   // X usage = left X
+    b->y  = rp->ly;   // Y usage = left Y
+    b->lz = rp->lz;   // Z usage = left trigger
+    b->rx = rp->rx;   // Rx usage = right X
+    b->ry = rp->ry;   // Ry usage = right Y
+    b->rz = rp->rz;   // Rz usage = right trigger
 }
 
 static void conv_xinput(uint8_t *src, uint8_t *dst) {
     rp2040_xinput_t *x = (rp2040_xinput_t *)src;
     ble_gamepad_t *b = (ble_gamepad_t *)dst;
     uint16_t b0 = x->buttons_0, b1 = x->buttons_1;
+    // Buttons: remap to match Linux standard gamepad mapping
     b->buttons =
-        ((b0 >> 0) & 1) << 10 |   // UP
-        ((b0 >> 1) & 1) << 11 |   // DOWN
-        ((b0 >> 2) & 1) << 8  |   // LEFT
-        ((b0 >> 3) & 1) << 9  |   // RIGHT
-        ((b0 >> 4) & 1) << 13 |   // START
-        ((b0 >> 5) & 1) << 12 |   // SELECT
-        ((b0 >> 6) & 1) << 6  |   // L3
-        ((b0 >> 7) & 1) << 7  |   // R3
-        ((b1 >> 0) & 1) << 4  |   // L1
-        ((b1 >> 1) & 1) << 5  |   // R1
-        ((b1 >> 2) & 1) << 14 |   // HOME
-        ((b1 >> 4) & 1) << 0  |   // A
-        ((b1 >> 5) & 1) << 1  |   // B
-        ((b1 >> 6) & 1) << 2  |   // X
-        ((b1 >> 7) & 1) << 3;     // Y
-    b->x  = x->lx;
-    b->y  = -x->ly;    // XInput negates ly internally; undo for BLE.
-    b->z  = x->rx;
-    b->rz = -x->ry;    // Same for ry.
-    b->rx = x->lz;
-    b->ry = x->rz;
+        ((b1 >> 4) & 1) << 0  |   // A        → bit 0  (BTN_SOUTH)
+        ((b1 >> 5) & 1) << 1  |   // B        → bit 1  (BTN_EAST)
+        0                         |   //          bit 2  (BTN_C, unused)
+        ((b1 >> 6) & 1) << 3  |   // X        → bit 3  (BTN_NORTH)
+        ((b1 >> 7) & 1) << 4  |   // Y        → bit 4  (BTN_WEST)
+        0                         |   //          bit 5  (BTN_Z, unused)
+        ((b1 >> 0) & 1) << 6  |   // L1       → bit 6  (BTN_TL)
+        ((b1 >> 1) & 1) << 7  |   // R1       → bit 7  (BTN_TR)
+        0                         |   //          bit 8  (BTN_TL2, unused)
+        0                         |   //          bit 9  (BTN_TR2, unused)
+        ((b0 >> 5) & 1) << 10 |   // SELECT   → bit 10 (BTN_SELECT)
+        ((b0 >> 4) & 1) << 11 |   // START    → bit 11 (BTN_START)
+        ((b1 >> 2) & 1) << 12 |   // HOME     → bit 12 (BTN_MODE)
+        ((b0 >> 6) & 1) << 13 |   // L3       → bit 13 (BTN_THUMBL)
+        ((b0 >> 7) & 1) << 14 |   // R3       → bit 14 (BTN_THUMBR)
+        0;                         //          bit 15 (unused)
+    // Hat Switch: convert D-pad buttons to hat value
+    b->hat = hat_from_dpad(
+        (b0 >> 0) & 1,  // UP
+        (b0 >> 1) & 1,  // DOWN
+        (b0 >> 2) & 1,  // LEFT
+        (b0 >> 3) & 1); // RIGHT
+    // Axes
+    b->x  = x->lx;       // X usage = left X
+    b->y  = -x->ly;      // Y usage = left Y (undo XInput negation)
+    b->lz = ((int16_t)x->lz * 257) - 32767;  // Z usage = left trigger [0,255]→[-32767,32767]
+    b->rx = x->rx;       // Rx usage = right X
+    b->ry = -x->ry;      // Ry usage = right Y (undo XInput negation)
+    b->rz = ((int16_t)x->rz * 257) - 32767;  // Rz usage = right trigger [0,255]→[-32767,32767]
 }
 
 void ble_hid_send_hid(uint8_t report_id, uint8_t *data, uint8_t len) {
