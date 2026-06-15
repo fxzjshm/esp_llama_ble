@@ -289,9 +289,9 @@ static void conv_xinput(uint8_t *src, uint8_t *dst) {
         ((b1 >> 6) & 1) << 2  |   // X
         ((b1 >> 7) & 1) << 3;     // Y
     b->x  = x->lx;
-    b->y  = x->ly;
+    b->y  = -x->ly;    // XInput negates ly internally; undo for BLE.
     b->z  = x->rx;
-    b->rz = x->ry;
+    b->rz = -x->ry;    // Same for ry.
     b->rx = x->lz;
     b->ry = x->rz;
 }
