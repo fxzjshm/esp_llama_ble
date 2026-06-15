@@ -235,6 +235,8 @@ typedef struct __attribute__((packed)) {
 } rp2040_gamepad_t;
 
 typedef struct __attribute__((packed)) {
+    uint8_t report_id;    // USB HID report ID (always 0)
+    uint8_t report_size;  // always 20 (XINPUT_REPORT_SIZE)
     uint8_t buttons_0;
     uint8_t buttons_1;
     uint8_t lz;
