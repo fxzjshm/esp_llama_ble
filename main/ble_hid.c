@@ -235,6 +235,18 @@ typedef struct __attribute__((packed)) {
 } rp2040_gamepad_t;
 
 typedef struct __attribute__((packed)) {
+    uint8_t buttons_0;
+    uint8_t buttons_1;
+    uint8_t lz;
+    uint8_t rz;
+    int16_t lx;
+    int16_t ly;
+    int16_t rx;
+    int16_t ry;
+    uint8_t reserved[6];
+} rp2040_xinput_t;
+
+typedef struct __attribute__((packed)) {
     uint16_t buttons;
     int16_t x;
     int16_t y;
@@ -256,6 +268,34 @@ static void conv_gamepad(uint8_t *src, uint8_t *dst) {
     ble->ry = (rp->rz + 32767) >> 8;
 }
 
+static void conv_xinput(uint8_t *src, uint8_t *dst) {
+    rp2040_xinput_t *x = (rp2040_xinput_t *)src;
+    ble_gamepad_t *b = (ble_gamepad_t *)dst;
+    uint16_t b0 = x->buttons_0, b1 = x->buttons_1;
+    b->buttons =
+        ((b0 >> 0) & 1) << 10 |   // UP
+        ((b0 >> 1) & 1) << 11 |   // DOWN
+        ((b0 >> 2) & 1) << 8  |   // LEFT
+        ((b0 >> 3) & 1) << 9  |   // RIGHT
+        ((b0 >> 4) & 1) << 13 |   // START
+        ((b0 >> 5) & 1) << 12 |   // SELECT
+        ((b0 >> 6) & 1) << 6  |   // L3
+        ((b0 >> 7) & 1) << 7  |   // R3
+        ((b1 >> 0) & 1) << 4  |   // L1
+        ((b1 >> 1) & 1) << 5  |   // R1
+        ((b1 >> 2) & 1) << 14 |   // HOME
+        ((b1 >> 4) & 1) << 0  |   // A
+        ((b1 >> 5) & 1) << 1  |   // B
+        ((b1 >> 6) & 1) << 2  |   // X
+        ((b1 >> 7) & 1) << 3;     // Y
+    b->x  = x->lx;
+    b->y  = x->ly;
+    b->z  = x->rx;
+    b->rz = x->ry;
+    b->rx = x->lz;
+    b->ry = x->rz;
+}
+
 void ble_hid_send_hid(uint8_t report_id, uint8_t *data, uint8_t len) {
     if (!connected || !hid_dev) return;
     ble_gamepad_t buf;
@@ -263,6 +303,12 @@ void ble_hid_send_hid(uint8_t report_id, uint8_t *data, uint8_t len) {
         conv_gamepad(data, (uint8_t *)&buf);
         data = (uint8_t *)&buf;
         len = sizeof(ble_gamepad_t);
+    }
+    if (report_id == 4) {
+        conv_xinput(data, (uint8_t *)&buf);
+        data = (uint8_t *)&buf;
+        len = sizeof(ble_gamepad_t);
+        report_id = 3;
     }
     esp_err_t ret = esp_hidd_dev_input_set(hid_dev, 0, report_id, data, len);
     if (ret != ESP_OK) {
