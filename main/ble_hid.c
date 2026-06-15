@@ -9,8 +9,9 @@
 #include "host/ble_sm.h"
 #include "host/ble_gap.h"
 #include "host/ble_store.h"
-#include "store/config/ble_store_config.h"
 #include "nimble/nimble_port.h"
+
+extern void ble_store_config_init(void);
 #include "nimble/nimble_port_freertos.h"
 #include "esp_hid_gap.h"
 #include "ble_hid.h"
