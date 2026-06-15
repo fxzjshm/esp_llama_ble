@@ -188,7 +188,7 @@ void ble_hid_init(void) {
         printf("BLE: nimble_port_init error=%d\n", ret);
         return;
     }
-    ret = esp_hid_ble_gap_adv_init(ESP_HID_APPEARANCE_GENERIC, "Alpakka");
+    ret = esp_hid_ble_gap_adv_init(ESP_HID_APPEARANCE_GAMEPAD, "Alpakka");
     if (ret != ESP_OK) {
         printf("BLE: adv_init error=%d\n", ret);
         return;
