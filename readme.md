@@ -41,7 +41,7 @@ make load
 Press Home + Up-left button and hold to enter bootsel mode, or use the Web Contol GUI,
 then mount the FAT16 partition shown, picotool should copy the uf2 into rp2040 chip.
 
-After flashing ESP32-C2, build and flash alpakka_v1 firmware:
+After rp2040 has flashed ESP32-C2 (LED no longer blinks), build and flash alpakka_v1 firmware:
 
 ```bash
 DEVICE=alpakka_v1 make -j16
@@ -52,7 +52,7 @@ make load
 
 * The requested latency is set to 7.5 -- 11.25 ms, however the host may not accept that value.
 * May require a re-connection after pairing with the host to get a lower latency
-* When switching between devices, better to forget the device first then re-pair, otherwise strange things may happen. (TODO, tried fixing but no luck yet.)
+* When switching between hosts (e.g. two different PCs), better to forget the Alpakka BLE device in the new host first, then re-pair in the new host, otherwise strange things may happen. (TODO, tried fixing but no luck yet.)
 
 ## Protocol
 The UART protocol with the RP2040 is unchanged from the original LLAMA
