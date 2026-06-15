@@ -14,6 +14,7 @@
 #include "freertos/semphr.h"
 
 #include "esp_hid_gap.h"
+#include "ble_hid.h"
 
 #if CONFIG_BT_NIMBLE_ENABLED
 #include "host/ble_hs.h"
@@ -782,6 +783,13 @@ esp_err_t esp_hid_ble_gap_adv_init(uint16_t appearance, const char *device_name)
     fields.name = (uint8_t *)device_name;
     fields.name_len = strlen(device_name);
     fields.name_is_complete = 1;
+
+    /* Preferred connection interval: 7.5-11.25ms */
+    static const uint8_t slave_itvl[] = {
+        BLE_CONN_ITVL_MIN & 0xFF, (BLE_CONN_ITVL_MIN >> 8) & 0xFF,
+        BLE_CONN_ITVL_MAX & 0xFF, (BLE_CONN_ITVL_MAX >> 8) & 0xFF,
+    };
+    fields.slave_itvl_range = slave_itvl;
 
     uuid16 = (ble_uuid16_t *)malloc(sizeof(ble_uuid16_t));
     uuid16_1 = (ble_uuid16_t[]) {

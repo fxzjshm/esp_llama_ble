@@ -7,6 +7,7 @@
 #include "esp_hidd.h"
 #include "host/ble_hs.h"
 #include "host/ble_sm.h"
+#include "host/ble_gap.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "esp_hid_gap.h"
@@ -14,6 +15,7 @@
 
 static esp_hidd_dev_t *hid_dev = NULL;
 static bool connected = false;
+static struct ble_gap_event_listener gap_listener;
 
 // HID Report Map — composite device with keyboard, mouse, and gamepad.
 // Report ID 1: Keyboard (8 bytes: modifier, reserved, keycode[6])
@@ -157,6 +159,19 @@ static void hid_event_handler(void *event_handler_arg, esp_event_base_t event_ba
     }
 }
 
+static int ble_gap_event_handler(struct ble_gap_event *event, void *arg) {
+    if (event->type == BLE_GAP_EVENT_CONNECT && event->connect.status == 0) {
+        struct ble_gap_upd_params params = {
+            .itvl_min = BLE_CONN_ITVL_MIN,
+            .itvl_max = BLE_CONN_ITVL_MAX,
+            .latency = 0,
+            .supervision_timeout = 200,
+        };
+        ble_gap_update_params(event->connect.conn_handle, &params);
+    }
+    return 0;
+}
+
 static void ble_host_task(void *param) {
     nimble_port_run();
     nimble_port_freertos_deinit();
@@ -193,6 +208,8 @@ void ble_hid_init(void) {
         return;
     }
     printf("BLE: esp_hidd_dev_init ok\n");
+    ble_gap_event_listener_register(&gap_listener,
+                                    ble_gap_event_handler, NULL);
     nimble_port_freertos_init(ble_host_task);
 }
 
