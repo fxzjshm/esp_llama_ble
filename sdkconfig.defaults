@@ -18,6 +18,9 @@ CONFIG_ESP_WIFI_ENABLED=n
 # Enable NimBLE HID service (required by esp_hidd for HID Device support)
 CONFIG_BT_NIMBLE_HID_SERVICE=y
 
+# Persist bonding keys to NVS (required for reconnection without re-pairing)
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+
 # Allow up to 8 HID report characteristics (keyboard in+out, mouse, gamepad)
 CONFIG_BT_NIMBLE_SVC_HID_MAX_RPTS=8
 
