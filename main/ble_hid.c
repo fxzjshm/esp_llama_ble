@@ -8,6 +8,8 @@
 #include "host/ble_hs.h"
 #include "host/ble_sm.h"
 #include "host/ble_gap.h"
+#include "host/ble_store.h"
+#include "store/config/ble_store_config.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "esp_hid_gap.h"
@@ -189,6 +191,8 @@ void ble_hid_init(void) {
         printf("BLE: adv_init error=%d\n", ret);
         return;
     }
+    ble_store_config_init();
+    ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
     ble_hs_cfg.sm_io_cap = BLE_SM_IO_CAP_NO_IO;
     ble_hs_cfg.sm_mitm = 0;
     const esp_hid_device_config_t config = {
