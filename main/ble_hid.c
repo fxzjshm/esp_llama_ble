@@ -2,6 +2,7 @@
 // Copyright (C) 2025, Input Labs Oy.
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include "esp_err.h"
 #include "esp_hidd.h"
@@ -23,7 +24,7 @@ static struct ble_gap_event_listener gap_listener;
 // HID Report Map — composite device with keyboard, mouse, and gamepad.
 // Report ID 1: Keyboard (8 bytes: modifier, reserved, keycode[6])
 // Report ID 2: Mouse (7 bytes: buttons, x[2], y[2], scroll, pan)
-// Report ID 3: Gamepad (16 bytes: lx[2], ly[2], rx[2], ry[2], lz[2], rz[2], buttons[4])
+// Report ID 3: Gamepad (12 bytes: buttons[2], lx[2], ly[2], rx[2], ry[2], lz[1], rz[1])
 static const uint8_t hid_report_map[] = {
     0x05, 0x01,       // Usage Page (Generic Desktop)
     0x09, 0x06,       // Usage (Keyboard)
@@ -223,8 +224,46 @@ void ble_hid_init(void) {
 // Stub required by esp_hid_gap.c (example uses it to start a demo task).
 void ble_hid_task_start_up(void) {}
 
+typedef struct __attribute__((packed)) {
+    int16_t lx;
+    int16_t ly;
+    int16_t rx;
+    int16_t ry;
+    int16_t lz;
+    int16_t rz;
+    uint32_t buttons;
+} rp2040_gamepad_t;
+
+typedef struct __attribute__((packed)) {
+    uint16_t buttons;
+    int16_t x;
+    int16_t y;
+    int16_t z;
+    int16_t rz;
+    uint8_t rx;
+    uint8_t ry;
+} ble_gamepad_t;
+
+static void conv_gamepad(uint8_t *src, uint8_t *dst) {
+    rp2040_gamepad_t *rp = (rp2040_gamepad_t *)src;
+    ble_gamepad_t *ble = (ble_gamepad_t *)dst;
+    ble->buttons = rp->buttons;
+    ble->x = rp->lx;
+    ble->y = rp->ly;
+    ble->z = rp->rx;
+    ble->rz = rp->ry;
+    ble->rx = (rp->lz + 32767) >> 8;
+    ble->ry = (rp->rz + 32767) >> 8;
+}
+
 void ble_hid_send_hid(uint8_t report_id, uint8_t *data, uint8_t len) {
     if (!connected || !hid_dev) return;
+    ble_gamepad_t buf;
+    if (report_id == 3) {
+        conv_gamepad(data, (uint8_t *)&buf);
+        data = (uint8_t *)&buf;
+        len = sizeof(ble_gamepad_t);
+    }
     esp_err_t ret = esp_hidd_dev_input_set(hid_dev, 0, report_id, data, len);
     if (ret != ESP_OK) {
         printf("BLE: input_set error=%d\n", ret);
